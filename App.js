@@ -10,6 +10,7 @@ import { createClient } from '@supabase/supabase-js';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import { File } from 'expo-file-system';
+import * as FileSystemLegacy from 'expo-file-system/legacy';
 
 const URL = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
 const KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
@@ -105,7 +106,7 @@ export default function App() {
   const [userUsername,setUserUsername] = useState('');
   const [userPassword,setUserPassword] = useState('');
   const [userName,setUserName] = useState('');
-  const [userRole,setUserRole] = useState('viewer');
+  const [userRole,setUserRole] = useState('staff');
   const [permissions,setPermissions] = useState({view_stock:true,record_in:false,record_out:false,manage_products:false});
   const [usersLoading,setUsersLoading] = useState(false);
   const [expandedUsers,setExpandedUsers] = useState({});
@@ -421,25 +422,31 @@ export default function App() {
       if(!result?.uri) throw new Error('فایل PDF ساخته نشد.');
       const pdfFile=new File(result.uri);
       if(!pdfFile.exists) throw new Error('فایل PDF ساخته شد اما قابل خواندن نیست.');
-      if(await Sharing.isAvailableAsync()) {
-        try {
-          await Sharing.shareAsync(pdfFile.uri,{mimeType:'application/pdf',dialogTitle:'اشتراک گزارش انبار',UTI:'com.adobe.pdf'});
-        } catch(shareError) {
-          if(Platform.OS==='android' && await File.canPreview(pdfFile)) {
-            Alert.alert('اشتراک مستقیم ممکن نشد','فایل PDF ساخته شده است؛ از گزینه اشتراک‌گذاری در نمایشگر PDF استفاده کنید.',[
-              {text:'باز کردن PDF',onPress:()=>pdfFile.preview({title:'گزارش انبار'})},
-              {text:'باشه',style:'cancel'}
-            ]);
-          } else {
-            throw shareError;
-          }
+      if(Platform.OS==='android') {
+        let directoryUri=await AsyncStorage.getItem('junior-report-download-directory');
+        if(!directoryUri) {
+          const permission=await FileSystemLegacy.StorageAccessFramework.requestDirectoryPermissionsAsync();
+          if(!permission.granted) return;
+          directoryUri=permission.directoryUri;
+          await AsyncStorage.setItem('junior-report-download-directory',directoryUri);
         }
+        try {
+          const base64=await FileSystemLegacy.readAsStringAsync(pdfFile.uri,{encoding:FileSystemLegacy.EncodingType.Base64});
+          const targetUri=await FileSystemLegacy.StorageAccessFramework.createFileAsync(directoryUri,`Junior-Storage-${Date.now()}.pdf`,'application/pdf');
+          await FileSystemLegacy.writeAsStringAsync(targetUri,base64,{encoding:FileSystemLegacy.EncodingType.Base64});
+        } catch(saveError) {
+          await AsyncStorage.removeItem('junior-report-download-directory');
+          throw new Error('ذخیره در پوشه انتخاب‌شده انجام نشد. دوباره گزارش را بزن و پوشه Downloads را انتخاب کن. '+(saveError.message||''));
+        }
+        Alert.alert('دانلود انجام شد','فایل PDF در پوشه‌ای که انتخاب کردی ذخیره شد.');
+      } else if(await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(pdfFile.uri,{mimeType:'application/pdf',dialogTitle:'گزارش انبار',UTI:'com.adobe.pdf'});
       } else if(await File.canPreview(pdfFile)) {
         await pdfFile.preview({title:'گزارش انبار'});
       } else {
-        throw new Error('امکان اشتراک‌گذاری یا نمایش PDF در این دستگاه در دسترس نیست.');
+        throw new Error('امکان ذخیره یا نمایش PDF در این دستگاه در دسترس نیست.');
       }
-    } catch(e) { Alert.alert('ساخت یا اشتراک PDF ناموفق بود',e.message||'خطای نامشخص'); }
+    } catch(e) { Alert.alert('ساخت یا دانلود PDF ناموفق بود',e.message||'خطای نامشخص'); }
   }
   function escapeHtml(value) { return String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
   async function loadContact() {
@@ -466,10 +473,10 @@ export default function App() {
     if(!userUsername.trim()||userPassword.length<8) return Alert.alert('اطلاعات ناقص','نام کاربری و رمز حداقل ۸ کاراکتری وارد کنید.');
     setBusy(true);
     const {data:{session:current}}=await supabase.auth.getSession();
-    const {data,error}=await supabase.functions.invoke('admin-create-user',{body:{username:userUsername.trim().toLowerCase(),password:userPassword,display_name:userName.trim(),role:userRole,permissions:userRole==='staff'?permissions:{}} ,headers:{Authorization:`Bearer ${current?.access_token||''}`}});
+    const {data,error}=await supabase.functions.invoke('admin-create-user',{body:{username:userUsername.trim().toLowerCase(),password:userPassword,display_name:userName.trim(),role:'staff',permissions} ,headers:{Authorization:`Bearer ${current?.access_token||''}`}});
     setBusy(false);
     if(error) return Alert.alert('ساخت کاربر ناموفق',error.message);
-    setUserUsername('');setUserPassword('');setUserName('');await loadUsers();Alert.alert('کاربر ساخته شد','نام کاربری: '+(data?.username||userUsername.trim()));
+    setUserUsername('');setUserPassword('');setUserName('');setRoleMenuOpen(false);setPermissions({view_stock:true,record_in:false,record_out:false,manage_products:false});await loadUsers();Alert.alert('کاربر ساخته شد','نام کاربری: '+(data?.username||userUsername.trim()));
   }
   async function startEditUser(user) { setEditingUserId(user.id); setEditUsername(user.username||''); setEditPassword(''); }
   async function saveUserAccount(user) {
@@ -493,10 +500,10 @@ export default function App() {
     if(error) Alert.alert('تغییر نقش ناموفق',error.message); else loadUsers();
   }
   async function updateUserPermission(user,key,value) {
-    if(!isAdmin || user.id===session.user.id || user.role!=='staff') return;
+    if(!isAdmin || user.id===session.user.id) return;
     const next={...(user.permissions||{}),[key]:value};
     if(value && ['record_in','record_out','manage_products'].includes(key)) next.view_stock=true;
-    const {error}=await supabase.from('profiles').update({permissions:next}).eq('id',user.id);
+    const {error}=await supabase.from('profiles').update({role:'staff',permissions:next}).eq('id',user.id);
     if(error) Alert.alert('تغییر دسترسی ناموفق',error.message); else loadUsers();
   }
   async function loadSettings() { await loadContact(); }
@@ -596,10 +603,8 @@ export default function App() {
       {tab==='admin' && isAdmin && <ScrollView keyboardShouldPersistTaps="handled">
         {selectedUserId ? (()=>{const u=users.find(x=>x.id===selectedUserId);if(!u)return <Empty text="کاربر پیدا نشد."/>;return <View style={[s.card,{backgroundColor:activeColors.card,borderColor:activeColors.line}]}>
           <Text style={[s.cardTitle,{color:activeColors.ink}]}>مدیریت کاربر: {u.display_name||u.username}</Text>
-          <Text style={[s.sub,{color:activeColors.muted}]}>نقش فعلی: {u.role==='admin'?'مدیر':u.role==='staff'?'کاربر عادی':'مشاهده‌گر'}</Text>
-          <Text style={[s.cardTitle,{color:activeColors.ink,marginTop:14}]}>تغییر دسترسی‌ها</Text>
-          <View style={s.actionRow}><Btn title="مشاهده‌گر" small kind={u.role==='viewer'?'primary':'light'} onPress={()=>updateUserRole(u,'viewer')}/><Btn title="کاربر عادی" small kind={u.role==='staff'?'primary':'light'} onPress={()=>updateUserRole(u,'staff')}/></View>
-          {[['view_stock','مشاهده موجودی'],['record_in','ثبت ورودی'],['record_out','ثبت خروجی'],['manage_products','مدیریت محصولات']].map(([k,l])=><View key={k} style={s.settingRow}><Text style={[s.itemName,{color:activeColors.ink}]}>{l}</Text>{u.role==='staff' ? <Switch value={!!u.permissions?.[k]} onValueChange={v=>updateUserPermission(u,k,v)}/> : <Text style={[s.sub,{color:activeColors.muted}]}>{u.role==='viewer'&&k==='view_stock'?'فعال':'غیرفعال'}</Text>}</View>)}
+          <Text style={[s.cardTitle,{color:activeColors.ink,marginTop:14}]}>تعیین دسترسی‌ها</Text>
+          {[['view_stock','مشاهده موجودی'],['record_in','ثبت ورودی'],['record_out','ثبت خروجی'],['manage_products','مدیریت محصولات']].map(([k,l])=><View key={k} style={s.settingRow}><Text style={[s.itemName,{color:activeColors.ink}]}>{l}</Text><Switch value={u.role==='viewer' ? k==='view_stock' : !!u.permissions?.[k]} onValueChange={v=>updateUserPermission(u,k,v)}/></View>)}
           <Text style={[s.cardTitle,{color:activeColors.ink,marginTop:18}]}>اطلاعات ورود</Text>
           <Field value={editUsername} onChangeText={setEditUsername} placeholder="نام کاربری جدید"/>
           <Field value={editPassword} onChangeText={setEditPassword} placeholder="رمز عبور جدید (خالی = بدون تغییر)" secureTextEntry/>
@@ -607,9 +612,8 @@ export default function App() {
         </View>})() : <>
           <View style={[s.card,{backgroundColor:activeColors.card,borderColor:activeColors.line}]}><Text style={[s.cardTitle,{color:activeColors.ink}]}>افزودن کاربر جدید</Text>
             <Field value={userName} onChangeText={setUserName} placeholder="نام نمایشی"/><Field value={userUsername} onChangeText={setUserUsername} placeholder="نام کاربری (انگلیسی)"/><Field value={userPassword} onChangeText={setUserPassword} placeholder="رمز عبور (حداقل ۸ کاراکتر)" secureTextEntry/>
-            <View style={[s.actionRow,{alignItems:'center'}]}><Text style={[s.sub,{color:activeColors.muted,flex:1}]}>نوع دسترسی: {userRole==='viewer'?'مشاهده‌گر':'کاربر با دسترسی انتخابی'}</Text><Btn title={roleMenuOpen?'⌃':'⌄'} kind="light" small onPress={()=>setRoleMenuOpen(v=>!v)}/></View>
-            {roleMenuOpen && <View style={s.actionRow}><Btn title="مشاهده‌گر" kind={userRole==='viewer'?'primary':'light'} small onPress={()=>{setUserRole('viewer');setRoleMenuOpen(false);}}/><Btn title="کاربر عادی" kind={userRole==='staff'?'primary':'light'} small onPress={()=>{setUserRole('staff');setRoleMenuOpen(false);}}/></View>}
-            {userRole==='staff' && [['view_stock','مشاهده موجودی'],['record_in','ثبت ورودی'],['record_out','ثبت خروجی'],['manage_products','مدیریت محصولات']].map(([k,l])=><View key={k} style={s.settingRow}><Text style={[s.itemName,{color:activeColors.ink}]}>{l}</Text><Switch value={!!permissions[k]} onValueChange={v=>setPermissions(p=>({...p,[k]:v,...(v&&['record_in','record_out','manage_products'].includes(k)?{view_stock:true}:{})}))}/></View>)}
+            <View style={[s.actionRow,{alignItems:'center'}]}><Text style={[s.sub,{color:activeColors.muted,flex:1}]}>برای تعیین دسترسی‌ها فلش را بزن</Text><Btn title={roleMenuOpen?'⌃':'⌄'} kind="light" small onPress={()=>setRoleMenuOpen(v=>!v)}/></View>
+            {roleMenuOpen && [['view_stock','مشاهده موجودی'],['record_in','ثبت ورودی'],['record_out','ثبت خروجی'],['manage_products','مدیریت محصولات']].map(([k,l])=><View key={k} style={s.settingRow}><Text style={[s.itemName,{color:activeColors.ink}]}>{l}</Text><Switch value={!!permissions[k]} onValueChange={v=>setPermissions(p=>({...p,[k]:v,...(v&&['record_in','record_out','manage_products'].includes(k)?{view_stock:true}:{})}))}/></View>)}
             <Btn title={busy?'در حال ساخت...':'ساخت حساب کاربری'} onPress={createUser} disabled={busy}/>
           </View>
           <View style={[s.card,{backgroundColor:activeColors.card,borderColor:activeColors.line}]}><Text style={[s.cardTitle,{color:activeColors.ink}]}>کاربران ثبت‌شده</Text><Btn title={usersLoading?'در حال دریافت...':'به‌روزرسانی فهرست'} kind="light" onPress={loadUsers} disabled={usersLoading}/>
