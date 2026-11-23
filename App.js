@@ -259,7 +259,7 @@ export default function App() {
     const name = newName.trim();
     if (!name) return Alert.alert('نام محصول را وارد کنید');
     setBusy(true);
-    const {error} = await supabase.from('inventory').insert({name,quantity:0,packaging_type:newPackaging.trim() || null,description:newDescription.trim()});
+    const {error} = await supabase.from('inventory').insert({name,quantity:0,packaging_type:newPackaging.trim(),description:newDescription.trim()});
     setBusy(false);
     if (error) Alert.alert('خطا',error.message);
     else { setNewName(''); setNewPackaging(''); setNewDescription(''); refresh(); }
@@ -274,7 +274,7 @@ export default function App() {
     const name = editingItemName.trim();
     if (!name) return Alert.alert('نام محصول را وارد کنید');
     setBusy(true);
-    const {error} = await supabase.from('inventory').update({name,packaging_type:editingPackaging.trim() || null,description:editingDescription.trim()}).eq('id',editingItemId);
+    const {error} = await supabase.from('inventory').update({name,packaging_type:editingPackaging.trim(),description:editingDescription.trim()}).eq('id',editingItemId);
     setBusy(false);
     if (error) Alert.alert('ویرایش انجام نشد',error.message);
     else { setEditingItemId(null); setEditingItemName(''); setEditingPackaging(''); setEditingDescription(''); await refresh(); }
