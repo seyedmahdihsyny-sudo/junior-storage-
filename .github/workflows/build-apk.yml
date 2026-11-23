@@ -37,6 +37,9 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: Install Expo notifications
+        run: npx expo install expo-notifications
+
       - name: Check Supabase configuration
         run: |
           test -n "$EXPO_PUBLIC_SUPABASE_URL" || (echo "Missing Supabase URL secret" && exit 1)
