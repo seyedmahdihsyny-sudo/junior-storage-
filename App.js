@@ -109,6 +109,10 @@ export default function App() {
   const [permissions,setPermissions] = useState({view_stock:true,record_in:false,record_out:false,manage_products:false});
   const [usersLoading,setUsersLoading] = useState(false);
   const [expandedUsers,setExpandedUsers] = useState({});
+  const [editingUserId,setEditingUserId] = useState(null);
+  const [editUsername,setEditUsername] = useState('');
+  const [editPassword,setEditPassword] = useState('');
+  const [editUserBusy,setEditUserBusy] = useState(false);
   const [roleMenuOpen,setRoleMenuOpen] = useState(false);
   const [darkMode,setDarkMode] = useState(false);
   const [palette,setPalette] = useState('teal');
@@ -466,6 +470,22 @@ export default function App() {
     if(error) return Alert.alert('ساخت کاربر ناموفق',error.message);
     setUserUsername('');setUserPassword('');setUserName('');await loadUsers();Alert.alert('کاربر ساخته شد','نام کاربری: '+(data?.username||userUsername.trim()));
   }
+  async function startEditUser(user) { setEditingUserId(user.id); setEditUsername(user.username||''); setEditPassword(''); }
+  async function saveUserAccount(user) {
+    if(!isAdmin || user.id===session.user.id) return;
+    const username=editUsername.trim().toLowerCase();
+    if(!/^[a-z0-9][a-z0-9_.-]{2,29}$/.test(username)) return Alert.alert('نام کاربری نامعتبر','نام کاربری باید ۳ تا ۳۰ کاراکتر و فقط شامل حروف انگلیسی، عدد، نقطه، خط تیره یا زیرخط باشد.');
+    if(editPassword && editPassword.length<8) return Alert.alert('رمز عبور نامعتبر','رمز عبور جدید باید حداقل ۸ کاراکتر باشد.');
+    setEditUserBusy(true);
+    try {
+      const {data:{session:current}}=await supabase.auth.getSession();
+      const {data,error}=await supabase.functions.invoke('admin-update-user',{body:{user_id:user.id,username,password:editPassword||undefined},headers:{Authorization:`Bearer ${current?.access_token||''}`}});
+      if(error) throw error;
+      if(data?.error) throw new Error(data.error);
+      setEditingUserId(null);setEditPassword('');await loadUsers();Alert.alert('ذخیره شد','اطلاعات حساب کاربر به‌روزرسانی شد.');
+    } catch(e) { Alert.alert('ویرایش حساب ناموفق',e.message||'خطا در ذخیره اطلاعات'); }
+    finally { setEditUserBusy(false); }
+  }
   async function updateUserRole(user,role) {
     if(!isAdmin || user.id===session.user.id) return;
     const {error}=await supabase.from('profiles').update({role,permissions:role==='staff'?user.permissions||{}:{}}).eq('id',user.id);
@@ -581,7 +601,7 @@ export default function App() {
           <Btn title={busy?'در حال ساخت...':'ساخت حساب کاربری'} onPress={createUser} disabled={busy}/>
         </View>
         <View style={[s.card,{backgroundColor:activeColors.card,borderColor:activeColors.line}]}><Text style={[s.cardTitle,{color:activeColors.ink}]}>کاربران ثبت‌شده</Text><Btn title={usersLoading?'در حال دریافت...':'به‌روزرسانی فهرست'} kind="light" onPress={loadUsers} disabled={usersLoading}/>
-          {users.map(u=><View key={u.id} style={s.userRow}><View style={{flex:1}}><Text style={[s.itemName,{color:activeColors.ink}]}>{u.display_name||u.username||u.id}</Text><Text style={[s.sub,{color:activeColors.muted}]}>نام کاربری: {u.username||'ثبت نشده'}</Text><Text style={[s.sub,{color:activeColors.muted}]}>نقش: {u.role==='admin'?'مدیر':u.role==='staff'?'کاربر عادی':'مشاهده‌گر'}</Text>{expandedUsers[u.id] && <View style={{marginTop:8}}>{[['view_stock','مشاهده موجودی'],['record_in','ثبت ورودی'],['record_out','ثبت خروجی'],['manage_products','مدیریت محصولات']].map(([k,l])=><View key={k} style={s.settingRow}><Text style={[s.sub,{color:activeColors.muted}]}>{l}</Text>{u.role==='staff' && u.id!==session.user.id ? <Switch value={!!u.permissions?.[k]} onValueChange={v=>updateUserPermission(u,k,v)}/> : <Text style={[s.sub,{color:activeColors.muted}]}>{u.role==='admin'||(u.role==='viewer'&&k==='view_stock')||!!u.permissions?.[k]?'فعال':'غیرفعال'}</Text>}</View>)}</View>}</View>{u.id!==session.user.id && <View style={s.actionRow}><Btn title="مشاهده وضعیت دسترسی" small kind="light" onPress={()=>setExpandedUsers(v=>({...v,[u.id]:!v[u.id]}))}/><Btn title={expandedUsers[u.id]?'⌃':'⌄'} small kind="light" onPress={()=>setExpandedUsers(v=>({...v,[u.id]:!v[u.id]}))}/></View>}</View>)}
+          {users.map(u=><View key={u.id} style={s.userRow}><View style={{flex:1}}><Text style={[s.itemName,{color:activeColors.ink}]}>{u.display_name||u.username||u.id}</Text><Text style={[s.sub,{color:activeColors.muted}]}>نام کاربری: {u.username||'ثبت نشده'}</Text><Text style={[s.sub,{color:activeColors.muted}]}>نقش: {u.role==='admin'?'مدیر':u.role==='staff'?'کاربر عادی':'مشاهده‌گر'}</Text>{expandedUsers[u.id] && <View style={{marginTop:8}}><Text style={[s.sub,{color:activeColors.muted}]}>تغییر نوع حساب</Text><View style={s.actionRow}><Btn title="مشاهده‌گر" small kind={u.role==='viewer'?'primary':'light'} onPress={()=>updateUserRole(u,'viewer')}/><Btn title="کاربر عادی" small kind={u.role==='staff'?'primary':'light'} onPress={()=>updateUserRole(u,'staff')}/></View>{[['view_stock','مشاهده موجودی'],['record_in','ثبت ورودی'],['record_out','ثبت خروجی'],['manage_products','مدیریت محصولات']].map(([k,l])=><View key={k} style={s.settingRow}><Text style={[s.sub,{color:activeColors.muted}]}>{l}</Text>{u.role==='staff' && u.id!==session.user.id ? <Switch value={!!u.permissions?.[k]} onValueChange={v=>updateUserPermission(u,k,v)}/> : <Text style={[s.sub,{color:activeColors.muted}]}>{u.role==='admin'||(u.role==='viewer'&&k==='view_stock')||!!u.permissions?.[k]?'فعال':'غیرفعال'}</Text>}</View>)}{editingUserId===u.id ? <View style={{marginTop:10}}><Field value={editUsername} onChangeText={setEditUsername} placeholder="نام کاربری جدید"/><Field value={editPassword} onChangeText={setEditPassword} placeholder="رمز عبور جدید (خالی = بدون تغییر)" secureTextEntry/><View style={s.actionRow}><Btn title={editUserBusy?'در حال ذخیره...':'ذخیره تغییرات حساب'} small onPress={()=>saveUserAccount(u)} disabled={editUserBusy}/><Btn title="انصراف" small kind="light" onPress={()=>setEditingUserId(null)}/></View></View> : <Btn title="تغییر نام کاربری و رمز عبور" small kind="light" onPress={()=>startEditUser(u)}/>}</View>}</View>{u.id!==session.user.id && <View style={s.actionRow}><Btn title="مشاهده وضعیت دسترسی" small kind="light" onPress={()=>setExpandedUsers(v=>({...v,[u.id]:true}))}/><Btn title={expandedUsers[u.id]?'⌃':'⌄'} small kind="light" onPress={()=>setExpandedUsers(v=>({...v,[u.id]:false}))}/></View>}</View>)}
         </View>
       </ScrollView>}
       {tab==='settings' && <ScrollView><View style={[s.card,{backgroundColor:activeColors.card,borderColor:activeColors.line}]}><Text style={[s.cardTitle,{color:activeColors.ink}]}>نمایش برنامه</Text><View style={s.settingRow}><Text style={[s.itemName,{color:activeColors.ink}]}>حالت تیره</Text><Switch value={darkMode} onValueChange={setDarkMode}/></View><Text style={[s.sub,{color:activeColors.muted}]}>رنگ‌بندی</Text><View style={s.actionRow}><Btn title="سبزآبی" kind={palette==='teal'?'primary':'light'} small onPress={()=>setPalette('teal')}/><Btn title="آبی" kind={palette==='blue'?'primary':'light'} small onPress={()=>setPalette('blue')}/><Btn title="بنفش" kind={palette==='purple'?'primary':'light'} small onPress={()=>setPalette('purple')}/></View></View>
