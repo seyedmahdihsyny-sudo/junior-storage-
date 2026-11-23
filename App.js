@@ -1,8 +1,9 @@
 import 'react-native-url-polyfill/auto';
 import React, { useEffect, useMemo, useState } from 'react';
+import { version as appVersion } from './package.json';
 import {
   ActivityIndicator, Alert, FlatList, KeyboardAvoidingView, Platform,
-  SafeAreaView, ScrollView, StatusBar, StyleSheet, Text, TextInput,
+  SafeAreaView, ScrollView, StatusBar, StyleSheet, Text, TextInput, Linking,
   TouchableOpacity, View, Share, Switch
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -163,6 +164,33 @@ export default function App() {
       authListener.subscription.unsubscribe();
     };
   }, []);
+  useEffect(() => {
+    if (!session || !supabase) return;
+    let active = true;
+    const checkAppUpdate = async () => {
+      try {
+        const { data, error } = await supabase.from('app_settings')
+          .select('key,value').in('key',['latest_app_version','latest_apk_url']);
+        if (error || !active) return;
+        const settings = Object.fromEntries((data || []).map(row => [row.key,row.value]));
+        const latest = String(settings.latest_app_version || '').trim();
+        const currentParts = String(appVersion || '1.0.0').split('.').map(Number);
+        const latestParts = latest.split('.').map(Number);
+        const newer = latestParts.length > 0 && latestParts.some(x => !Number.isNaN(x)) &&
+          latestParts.some((part,index) => (part || 0) > (currentParts[index] || 0) &&
+            latestParts.slice(0,index).every((v,i) => (v || 0) === (currentParts[i] || 0)));
+        if (!newer || !active) return;
+        const url = String(settings.latest_apk_url || '').trim();
+        Alert.alert('به‌روزرسانی در دسترس است',`نسخه جدید Junior Storage (${latest}) منتشر شده است.`,
+          url ? [{text:'بعداً',style:'cancel'},{text:'دریافت نسخه جدید',onPress:()=>Linking.openURL(url)}] : [{text:'باشه'}]);
+      } catch (error) {
+        console.warn('App update check failed:', error?.message || error);
+      }
+    };
+    checkAppUpdate();
+    return () => { active = false; };
+  }, [session?.user?.id]);
+
   useEffect(() => {
     if (!session || !supabase || Platform.OS === 'web') return;
     let active = true;
@@ -328,7 +356,7 @@ export default function App() {
     setBusy(false);
     if (error) Alert.alert('خطا',error.message);
     else {
-      await sendInventoryNotification({event:'product_added',productName:name});
+      await sendInventoryNotification({event:'inventory_updated'});
       setNewName(''); setNewPackaging(''); setNewDescription(''); refresh();
     }
   }
@@ -375,13 +403,7 @@ export default function App() {
         const item = items.find(x => x.id === line.item_id);
         return { name:item?.name || 'محصول', quantity:line.quantity };
       });
-      await sendInventoryNotification({
-        event:'stock_movement',
-        movementType:type,
-        itemCount:changedItems.length,
-        totalQuantity:changedItems.reduce((sum,x)=>sum+x.quantity,0),
-        items:changedItems.slice(0,3)
-      });
+      await sendInventoryNotification({event:'inventory_updated'});
       setQuantities({}); await refresh(); Alert.alert('ثبت شد','تمام ردیف‌ها با موفقیت ثبت شدند.');
     }
   }
