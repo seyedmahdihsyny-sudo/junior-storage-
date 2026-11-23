@@ -89,7 +89,7 @@ export default function App() {
   const [items,setItems] = useState([]);
   const [history,setHistory] = useState([]);
   const [busy,setBusy] = useState(false);
-  const [email,setEmail] = useState('');
+  const [username,setUsername] = useState('');
   const [password,setPassword] = useState('');
   const [newName,setNewName] = useState('');
   const [newPackaging,setNewPackaging] = useState('');
@@ -102,11 +102,14 @@ export default function App() {
   const [contact,setContact] = useState({title:'ارتباط با ما',phone:'',email:'',description:''});
   const [contactDraft,setContactDraft] = useState({title:'ارتباط با ما',phone:'',email:'',description:''});
   const [users,setUsers] = useState([]);
-  const [userEmail,setUserEmail] = useState('');
+  const [userUsername,setUserUsername] = useState('');
   const [userPassword,setUserPassword] = useState('');
   const [userName,setUserName] = useState('');
   const [userRole,setUserRole] = useState('viewer');
   const [permissions,setPermissions] = useState({view_stock:true,record_in:false,record_out:false,manage_products:false});
+  const [usersLoading,setUsersLoading] = useState(false);
+  const [expandedUsers,setExpandedUsers] = useState({});
+  const [roleMenuOpen,setRoleMenuOpen] = useState(false);
   const [darkMode,setDarkMode] = useState(false);
   const [palette,setPalette] = useState('teal');
   const [profileInfo,setProfileInfo] = useState(null);
@@ -249,11 +252,15 @@ export default function App() {
 
   async function login() {
     if (!configured) return Alert.alert('اتصال تنظیم نشده','ابتدا آدرس و کلید Supabase را در فایل .env وارد کنید و برنامه را دوباره اجرا کنید.');
-    if (!email.trim() || !password) return Alert.alert('ورودی ناقص','ایمیل و رمز عبور را وارد کنید.');
+    if (!username.trim() || !password) return Alert.alert('ورودی ناقص','نام کاربری و رمز عبور را وارد کنید.');
     setBusy(true);
-    const {error} = await supabase.auth.signInWithPassword({email:email.trim(),password});
-    setBusy(false);
-    if (error) Alert.alert('ورود ناموفق',error.message);
+    try {
+      const {data,error}=await supabase.functions.invoke('username-login',{body:{username:username.trim().toLowerCase(),password}});
+      if(error || !data?.access_token || !data?.refresh_token) throw new Error(data?.error || error?.message || 'نام کاربری یا رمز عبور اشتباه است.');
+      const {error:sessionError}=await supabase.auth.setSession({access_token:data.access_token,refresh_token:data.refresh_token});
+      if(sessionError) throw sessionError;
+    } catch(e) { Alert.alert('ورود ناموفق',e.message||'خطای نامشخص'); }
+    finally { setBusy(false); }
   }
   async function logout() { await supabase.auth.signOut(); setPassword(''); }
   async function addItem() {
@@ -440,19 +447,24 @@ export default function App() {
     setContact(contactDraft); Alert.alert('ذخیره شد','اطلاعات ارتباط با ما به‌روزرسانی شد.');
   }
   async function loadUsers() {
-    if(!isAdmin) return;
-    const {data,error}=await supabase.from('profiles').select('id,email,display_name,role,permissions').order('created_at',{ascending:true});
-    if(error) Alert.alert('خطا',error.message); else setUsers(data||[]);
+    if(!isAdmin || !supabase) return;
+    setUsersLoading(true);
+    try {
+      const {data,error}=await supabase.from('profiles').select('id,username,display_name,role,permissions,created_at').order('created_at',{ascending:true});
+      if(error) throw error;
+      setUsers(data||[]);
+    } catch(e) { Alert.alert('به‌روزرسانی فهرست ناموفق',e.message||'دریافت کاربران انجام نشد.'); }
+    finally { setUsersLoading(false); }
   }
   async function createUser() {
     if(!isAdmin) return;
-    if(!userEmail.trim()||userPassword.length<8) return Alert.alert('اطلاعات ناقص','ایمیل و رمز حداقل ۸ کاراکتری وارد کنید.');
+    if(!userUsername.trim()||userPassword.length<8) return Alert.alert('اطلاعات ناقص','نام کاربری و رمز حداقل ۸ کاراکتری وارد کنید.');
     setBusy(true);
     const {data:{session:current}}=await supabase.auth.getSession();
-    const {data,error}=await supabase.functions.invoke('admin-create-user',{body:{email:userEmail.trim(),password:userPassword,display_name:userName.trim(),role:userRole,permissions:userRole==='staff'?permissions:{}} ,headers:{Authorization:`Bearer ${current?.access_token||''}`}});
+    const {data,error}=await supabase.functions.invoke('admin-create-user',{body:{username:userUsername.trim().toLowerCase(),password:userPassword,display_name:userName.trim(),role:userRole,permissions:userRole==='staff'?permissions:{}} ,headers:{Authorization:`Bearer ${current?.access_token||''}`}});
     setBusy(false);
     if(error) return Alert.alert('ساخت کاربر ناموفق',error.message);
-    setUserEmail('');setUserPassword('');setUserName('');await loadUsers();Alert.alert('کاربر ساخته شد','حساب جدید آماده ورود است.');
+    setUserUsername('');setUserPassword('');setUserName('');await loadUsers();Alert.alert('کاربر ساخته شد','نام کاربری: '+(data?.username||userUsername.trim()));
   }
   async function updateUserRole(user,role) {
     if(!isAdmin || user.id===session.user.id) return;
@@ -486,7 +498,7 @@ export default function App() {
     <KeyboardAvoidingView behavior={Platform.OS==='ios'?'padding':undefined} style={s.centerPage}>
       <Text style={s.logo}>JUNIOR STORAGE</Text><Text style={[s.heading,{color:activeColors.ink}]}>مدیریت انبار کارخانه</Text>
       <Text style={[s.sub,{color:activeColors.muted}]}>برای ورود، حساب کاربری مجاز خود را وارد کنید.</Text>
-      <Field value={email} onChangeText={setEmail} placeholder="ایمیل" keyboardType="email-address"/>
+      <Field value={username} onChangeText={setUsername} placeholder="نام کاربری"/>
       <Field value={password} onChangeText={setPassword} placeholder="رمز عبور" secureTextEntry/>
       <Btn title={busy?'لطفاً صبر کنید':'ورود به برنامه'} onPress={login} disabled={busy}/>
       <Text style={s.tiny}>ساخت حساب کاربری فقط از طریق مدیر سیستم انجام می‌شود.</Text>
@@ -561,14 +573,14 @@ export default function App() {
       </ScrollView>}
       {tab==='admin' && isAdmin && <ScrollView keyboardShouldPersistTaps="handled">
         <View style={[s.card,{backgroundColor:activeColors.card,borderColor:activeColors.line}]}><Text style={[s.cardTitle,{color:activeColors.ink}]}>افزودن کاربر جدید</Text>
-          <Field value={userName} onChangeText={setUserName} placeholder="نام نمایشی"/><Field value={userEmail} onChangeText={setUserEmail} placeholder="ایمیل کاربر" keyboardType="email-address"/><Field value={userPassword} onChangeText={setUserPassword} placeholder="رمز عبور (حداقل ۸ کاراکتر)" secureTextEntry/>
-          <Text style={[s.sub,{color:activeColors.muted}]}>نقش: viewer فقط مشاهده · staff با مجوزهای انتخابی</Text>
-          <View style={s.actionRow}><Btn title="مشاهده‌گر" kind={userRole==='viewer'?'primary':'light'} small onPress={()=>setUserRole('viewer')}/><Btn title="کاربر با دسترسی انتخابی" kind={userRole==='staff'?'primary':'light'} small onPress={()=>setUserRole('staff')}/></View>
+          <Field value={userName} onChangeText={setUserName} placeholder="نام نمایشی"/><Field value={userUsername} onChangeText={setUserUsername} placeholder="نام کاربری (انگلیسی)"/><Field value={userPassword} onChangeText={setUserPassword} placeholder="رمز عبور (حداقل ۸ کاراکتر)" secureTextEntry/>
+          <View style={[s.actionRow,{alignItems:'center'}]}><Text style={[s.sub,{color:activeColors.muted,flex:1}]}>نوع دسترسی: {userRole==='viewer'?'مشاهده‌گر':'کاربر با دسترسی انتخابی'}</Text><Btn title={roleMenuOpen?'⌃':'⌄'} kind="light" small onPress={()=>setRoleMenuOpen(v=>!v)}/></View>
+          {roleMenuOpen && <View style={s.actionRow}><Btn title="مشاهده‌گر" kind={userRole==='viewer'?'primary':'light'} small onPress={()=>{setUserRole('viewer');setRoleMenuOpen(false);}}/><Btn title="کاربر عادی" kind={userRole==='staff'?'primary':'light'} small onPress={()=>{setUserRole('staff');setRoleMenuOpen(false);}}/></View>
           {userRole==='staff' && [['view_stock','مشاهده موجودی'],['record_in','ثبت ورودی'],['record_out','ثبت خروجی'],['manage_products','مدیریت محصولات']].map(([k,l])=><View key={k} style={s.settingRow}><Text style={[s.itemName,{color:activeColors.ink}]}>{l}</Text><Switch value={!!permissions[k]} onValueChange={v=>setPermissions(p=>({...p,[k]:v,...(v&&['record_in','record_out','manage_products'].includes(k)?{view_stock:true}:{})}))}/></View>)}
           <Btn title={busy?'در حال ساخت...':'ساخت حساب کاربری'} onPress={createUser} disabled={busy}/>
         </View>
-        <View style={[s.card,{backgroundColor:activeColors.card,borderColor:activeColors.line}]}><Text style={[s.cardTitle,{color:activeColors.ink}]}>کاربران ثبت‌شده</Text><Btn title="به‌روزرسانی فهرست" kind="light" onPress={loadUsers}/>
-          {users.map(u=><View key={u.id} style={s.userRow}><View style={{flex:1}}><Text style={[s.itemName,{color:activeColors.ink}]}>{u.display_name||u.email||u.id}</Text><Text style={[s.sub,{color:activeColors.muted}]}>{u.email||u.id}</Text><Text style={[s.sub,{color:activeColors.muted}]}>نقش: {u.role}</Text>{u.role==='staff' && [['view_stock','مشاهده موجودی'],['record_in','ثبت ورودی'],['record_out','ثبت خروجی'],['manage_products','مدیریت محصولات']].map(([k,l])=><View key={k} style={s.settingRow}><Text style={[s.sub,{color:activeColors.muted}]}>{l}</Text><Switch value={!!u.permissions?.[k]} onValueChange={v=>updateUserPermission(u,k,v)}/></View>)}</View>{u.id!==session.user.id && <View style={s.actionRow}><Btn title="مشاهده‌گر" small kind="light" onPress={()=>updateUserRole(u,'viewer')}/><Btn title="کاربر عادی" small onPress={()=>updateUserRole(u,'staff')}/></View>}</View>)}
+        <View style={[s.card,{backgroundColor:activeColors.card,borderColor:activeColors.line}]}><Text style={[s.cardTitle,{color:activeColors.ink}]}>کاربران ثبت‌شده</Text><Btn title={usersLoading?'در حال دریافت...':'به‌روزرسانی فهرست'} kind="light" onPress={loadUsers} disabled={usersLoading}/>
+          {users.map(u=><View key={u.id} style={s.userRow}><View style={{flex:1}}><Text style={[s.itemName,{color:activeColors.ink}]}>{u.display_name||u.username||u.id}</Text><Text style={[s.sub,{color:activeColors.muted}]}>نام کاربری: {u.username||'ثبت نشده'}</Text><Text style={[s.sub,{color:activeColors.muted}]}>نقش: {u.role==='admin'?'مدیر':u.role==='staff'?'کاربر عادی':'مشاهده‌گر'}</Text>{expandedUsers[u.id] && <View style={{marginTop:8}}>{[['view_stock','مشاهده موجودی'],['record_in','ثبت ورودی'],['record_out','ثبت خروجی'],['manage_products','مدیریت محصولات']].map(([k,l])=><View key={k} style={s.settingRow}><Text style={[s.sub,{color:activeColors.muted}]}>{l}</Text>{u.role==='staff' && u.id!==session.user.id ? <Switch value={!!u.permissions?.[k]} onValueChange={v=>updateUserPermission(u,k,v)}/> : <Text style={[s.sub,{color:activeColors.muted}]}>{u.role==='admin'||(u.role==='viewer'&&k==='view_stock')||!!u.permissions?.[k]?'فعال':'غیرفعال'}</Text>}</View>)}</View>}</View>{u.id!==session.user.id && <View style={s.actionRow}><Btn title="مشاهده وضعیت دسترسی" small kind="light" onPress={()=>setExpandedUsers(v=>({...v,[u.id]:!v[u.id]}))}/><Btn title={expandedUsers[u.id]?'⌃':'⌄'} small kind="light" onPress={()=>setExpandedUsers(v=>({...v,[u.id]:!v[u.id]}))}/></View>}</View>)}
         </View>
       </ScrollView>}
       {tab==='settings' && <ScrollView><View style={[s.card,{backgroundColor:activeColors.card,borderColor:activeColors.line}]}><Text style={[s.cardTitle,{color:activeColors.ink}]}>نمایش برنامه</Text><View style={s.settingRow}><Text style={[s.itemName,{color:activeColors.ink}]}>حالت تیره</Text><Switch value={darkMode} onValueChange={setDarkMode}/></View><Text style={[s.sub,{color:activeColors.muted}]}>رنگ‌بندی</Text><View style={s.actionRow}><Btn title="سبزآبی" kind={palette==='teal'?'primary':'light'} small onPress={()=>setPalette('teal')}/><Btn title="آبی" kind={palette==='blue'?'primary':'light'} small onPress={()=>setPalette('blue')}/><Btn title="بنفش" kind={palette==='purple'?'primary':'light'} small onPress={()=>setPalette('purple')}/></View></View>
