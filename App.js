@@ -481,6 +481,7 @@ export default function App() {
   async function loadSettings() { await loadContact(); }
 
   useEffect(()=>{ if(session && profile) loadSettings(); },[session,profile]);
+  useEffect(()=>{ if(tab==='admin' && isAdmin) loadUsers(); },[tab,isAdmin]);
   useEffect(()=>{ AsyncStorage.getItem('junior-theme').then(v=>{if(v){try{const x=JSON.parse(v);setDarkMode(!!x.darkMode);setPalette(x.palette||'teal');}catch{}}}); },[]);
   useEffect(()=>{ AsyncStorage.setItem('junior-theme',JSON.stringify({darkMode,palette})).catch(()=>{}); },[darkMode,palette]);
 
@@ -575,7 +576,7 @@ export default function App() {
         <View style={[s.card,{backgroundColor:activeColors.card,borderColor:activeColors.line}]}><Text style={[s.cardTitle,{color:activeColors.ink}]}>افزودن کاربر جدید</Text>
           <Field value={userName} onChangeText={setUserName} placeholder="نام نمایشی"/><Field value={userUsername} onChangeText={setUserUsername} placeholder="نام کاربری (انگلیسی)"/><Field value={userPassword} onChangeText={setUserPassword} placeholder="رمز عبور (حداقل ۸ کاراکتر)" secureTextEntry/>
           <View style={[s.actionRow,{alignItems:'center'}]}><Text style={[s.sub,{color:activeColors.muted,flex:1}]}>نوع دسترسی: {userRole==='viewer'?'مشاهده‌گر':'کاربر با دسترسی انتخابی'}</Text><Btn title={roleMenuOpen?'⌃':'⌄'} kind="light" small onPress={()=>setRoleMenuOpen(v=>!v)}/></View>
-          {roleMenuOpen && <View style={s.actionRow}><Btn title="مشاهده‌گر" kind={userRole==='viewer'?'primary':'light'} small onPress={()=>{setUserRole('viewer');setRoleMenuOpen(false);}}/><Btn title="کاربر عادی" kind={userRole==='staff'?'primary':'light'} small onPress={()=>{setUserRole('staff');setRoleMenuOpen(false);}}/></View>
+          {roleMenuOpen && <View style={s.actionRow}><Btn title="مشاهده‌گر" kind={userRole==='viewer'?'primary':'light'} small onPress={()=>{setUserRole('viewer');setRoleMenuOpen(false);}}/><Btn title="کاربر عادی" kind={userRole==='staff'?'primary':'light'} small onPress={()=>{setUserRole('staff');setRoleMenuOpen(false);}}/></View>}
           {userRole==='staff' && [['view_stock','مشاهده موجودی'],['record_in','ثبت ورودی'],['record_out','ثبت خروجی'],['manage_products','مدیریت محصولات']].map(([k,l])=><View key={k} style={s.settingRow}><Text style={[s.itemName,{color:activeColors.ink}]}>{l}</Text><Switch value={!!permissions[k]} onValueChange={v=>setPermissions(p=>({...p,[k]:v,...(v&&['record_in','record_out','manage_products'].includes(k)?{view_stock:true}:{})}))}/></View>)}
           <Btn title={busy?'در حال ساخت...':'ساخت حساب کاربری'} onPress={createUser} disabled={busy}/>
         </View>
