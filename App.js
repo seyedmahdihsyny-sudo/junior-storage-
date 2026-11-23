@@ -11,6 +11,7 @@ import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import { File } from 'expo-file-system';
 import * as FileSystemLegacy from 'expo-file-system/legacy';
+import * as Notifications from 'expo-notifications';
 
 const URL = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
 const KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
@@ -18,6 +19,8 @@ const configured = URL.startsWith('https://') && KEY.length > 20;
 const supabase = configured ? createClient(URL, KEY, {
   auth: { storage: AsyncStorage, autoRefreshToken: true, persistSession: true, detectSessionInUrl: false }
 }) : null;
+
+Notifications.setNotificationHandler({ handleNotification: async () => ({ shouldShowBanner:true, shouldShowList:true, shouldPlaySound:true, shouldSetBadge:false }) });
 
 const C = {
   bg:'#E6F3F1', card:'#FFFFFF', ink:'#102A3A', muted:'#4D6874', blue:'#087F73',
@@ -160,6 +163,54 @@ export default function App() {
       authListener.subscription.unsubscribe();
     };
   }, []);
+  useEffect(() => {
+    if (!session || !supabase || Platform.OS === 'web') return;
+    let active = true;
+    const registerPushToken = async () => {
+      try {
+        const current = await Notifications.getPermissionsAsync();
+        let status = current.status;
+        if (status !== 'granted') {
+          const requested = await Notifications.requestPermissionsAsync();
+          status = requested.status;
+        }
+        if (!active || status !== 'granted') return;
+        if (Platform.OS === 'android') {
+          await Notifications.setNotificationChannelAsync('inventory-updates', {
+            name: 'اعلان‌های انبار',
+            importance: Notifications.AndroidImportance.MAX,
+            vibrationPattern: [0, 250, 150, 250],
+            sound: 'default'
+          });
+        }
+        const tokenResult = await Notifications.getExpoPushTokenAsync({
+          projectId: 'b94a6b50-922d-40d8-b167-09f5ef5b3b09'
+        });
+        if (!active || !tokenResult?.data) return;
+        const { error } = await supabase.from('push_tokens').upsert({
+          user_id: session.user.id,
+          expo_push_token: tokenResult.data,
+          platform: Platform.OS,
+          updated_at: new Date().toISOString()
+        }, { onConflict: 'expo_push_token' });
+        if (error) console.warn('Push token registration failed:', error.message);
+      } catch (error) {
+        console.warn('Push notification setup failed:', error?.message || error);
+      }
+    };
+    registerPushToken();
+    return () => { active = false; };
+  }, [session?.user?.id]);
+
+  async function sendInventoryNotification(payload) {
+    try {
+      const { error } = await supabase.functions.invoke('send-inventory-notification', { body: payload });
+      if (error) console.warn('Inventory notification failed:', error.message);
+    } catch (error) {
+      console.warn('Inventory notification failed:', error?.message || error);
+    }
+  }
+
 
   useEffect(() => {
     let alive = true;
@@ -276,7 +327,10 @@ export default function App() {
     const {error} = await supabase.from('inventory').insert({name,quantity:0,packaging_type:newPackaging.trim(),description:newDescription.trim()});
     setBusy(false);
     if (error) Alert.alert('خطا',error.message);
-    else { setNewName(''); setNewPackaging(''); setNewDescription(''); refresh(); }
+    else {
+      await sendInventoryNotification({event:'product_added',productName:name});
+      setNewName(''); setNewPackaging(''); setNewDescription(''); refresh();
+    }
   }
   function startEditItem(item) {
     setEditingItemId(item.id);
@@ -316,7 +370,20 @@ export default function App() {
     const {error} = await supabase.rpc('record_bulk_movement',{p_type:type,p_lines:lines});
     setBusy(false);
     if (error) Alert.alert('ثبت انجام نشد',error.message);
-    else { setQuantities({}); await refresh(); Alert.alert('ثبت شد','تمام ردیف‌ها با موفقیت ثبت شدند.'); }
+    else {
+      const changedItems = lines.map(line => {
+        const item = items.find(x => x.id === line.item_id);
+        return { name:item?.name || 'محصول', quantity:line.quantity };
+      });
+      await sendInventoryNotification({
+        event:'stock_movement',
+        movementType:type,
+        itemCount:changedItems.length,
+        totalQuantity:changedItems.reduce((sum,x)=>sum+x.quantity,0),
+        items:changedItems.slice(0,3)
+      });
+      setQuantities({}); await refresh(); Alert.alert('ثبت شد','تمام ردیف‌ها با موفقیت ثبت شدند.');
+    }
   }
 
   async function removeMovementRecord(movement) {
