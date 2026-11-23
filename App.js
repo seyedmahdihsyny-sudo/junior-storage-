@@ -495,7 +495,7 @@ export default function App() {
             <Field value={editingItemName} onChangeText={setEditingItemName} placeholder="نام محصول جدید"/>
             <Field value={editingPackaging} onChangeText={setEditingPackaging} placeholder="نوع بسته‌بندی (کارتن، گونی، جعبه...)"/>
             <Field value={editingDescription} onChangeText={setEditingDescription} placeholder="توضیحات محصول" multiline/>
-            <View style={s.actionRow}<Btn title="ذخیره" onPress={saveItemEdit} disabled={busy} small/><Btn title="انصراف" kind="light" onPress={()=>{setEditingItemId(null);setEditingItemName('');}} small/></View>
+            <View style={s.actionRow}><Btn title="ذخیره" onPress={saveItemEdit} disabled={busy} small/><Btn title="انصراف" kind="light" onPress={()=>{setEditingItemId(null);setEditingItemName('');}} small/></View>
           </View> : <>
             <View style={s.productInfo}><View style={{flex:1}}><Text style={[s.itemName,{color:activeColors.ink}]}>{i.name}</Text>{i.description ? <Text style={[s.sub,{color:activeColors.muted}]}>{i.description}</Text> : null}<Text style={[s.sub,{color:activeColors.muted}]}>بسته‌بندی: {i.packaging_type || '—'}</Text></View><Text style={[s.qty,{color:activeColors.ink}]}>{Number(i.quantity).toLocaleString('fa-IR')}</Text></View>
             {can('manage_products') && <View style={s.actionRow}><Btn title="ویرایش" kind="light" onPress={()=>startEditItem(i)} disabled={busy} small/><Btn title="حذف" kind="danger" onPress={()=>confirmDeleteItem(i)} disabled={busy} small/></View>}
