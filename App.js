@@ -3,10 +3,12 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator, Alert, FlatList, KeyboardAvoidingView, Platform,
   SafeAreaView, ScrollView, StatusBar, StyleSheet, Text, TextInput,
-  TouchableOpacity, View
+  TouchableOpacity, View, Share, Switch
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createClient } from '@supabase/supabase-js';
+import * as Print from 'expo-print';
+import * as Sharing from 'expo-sharing';
 
 const URL = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
 const KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
@@ -27,10 +29,11 @@ function Btn({ title, onPress, kind='primary', disabled=false, small=false }) {
     <Text style={[s.btnText, kind==='light' && {color:C.blue}, small && {fontSize:12}]}>{title}</Text>
   </TouchableOpacity>;
 }
-function Field({ value, onChangeText, placeholder, keyboardType='default', secureTextEntry=false, style }) {
+function Field({ value, onChangeText, placeholder, keyboardType='default', secureTextEntry=false, multiline=false, style }) {
   return <TextInput value={value} onChangeText={onChangeText} placeholder={placeholder}
     placeholderTextColor="#9AA6B2" keyboardType={keyboardType} secureTextEntry={secureTextEntry}
-    style={[s.input, style]} />;
+    multiline={multiline} textAlignVertical={multiline ? 'top' : 'center'}
+    style={[s.input, multiline && {minHeight:76}, style]} />;
 }
 function Header({ title, subtitle }) {
   return <View style={s.header}><Text style={s.brand}>JUNIOR STORAGE</Text>
@@ -88,12 +91,32 @@ export default function App() {
   const [email,setEmail] = useState('');
   const [password,setPassword] = useState('');
   const [newName,setNewName] = useState('');
+  const [newPackaging,setNewPackaging] = useState('');
+  const [newDescription,setNewDescription] = useState('');
+  const [editingPackaging,setEditingPackaging] = useState('');
+  const [editingDescription,setEditingDescription] = useState('');
+  const [reportPeriod,setReportPeriod] = useState('week');
+  const [reportRows,setReportRows] = useState([]);
+  const [reportLoading,setReportLoading] = useState(false);
+  const [contact,setContact] = useState({title:'ارتباط با ما',phone:'',email:'',description:''});
+  const [contactDraft,setContactDraft] = useState({title:'ارتباط با ما',phone:'',email:'',description:''});
+  const [users,setUsers] = useState([]);
+  const [userEmail,setUserEmail] = useState('');
+  const [userPassword,setUserPassword] = useState('');
+  const [userName,setUserName] = useState('');
+  const [userRole,setUserRole] = useState('viewer');
+  const [permissions,setPermissions] = useState({view_stock:true,record_in:false,record_out:false,manage_products:false});
+  const [darkMode,setDarkMode] = useState(false);
+  const [palette,setPalette] = useState('teal');
+  const [profileInfo,setProfileInfo] = useState(null);
   const [editingItemId,setEditingItemId] = useState(null);
   const [editingItemName,setEditingItemName] = useState('');
   const [quantities,setQuantities] = useState({});
   const [search,setSearch] = useState('');
 
   const isAdmin = profile?.role === 'admin';
+  const can = key => isAdmin || (profile?.role==='viewer' && key==='view_stock') || (profile?.permissions && profile.permissions[key] === true);
+  const activeColors = darkMode ? {bg:'#101923',card:'#1B2936',ink:'#F2F6F8',muted:'#A8B6C2',line:'#344656',pale:'#263E49',blue:'#42C7B5',green:'#51B99A',red:'#E46C6C'} : (palette==='blue' ? {bg:'#F1F5FB',card:'#FFFFFF',ink:'#182A43',muted:'#66768A',line:'#DFE7F1',pale:'#E3EDFA',blue:'#3977C9',green:'#188B70',red:'#D64545'} : palette==='purple' ? {bg:'#F7F3FA',card:'#FFFFFF',ink:'#2D2440',muted:'#756B83',line:'#E9E0F0',pale:'#EFE5F7',blue:'#8761B5',green:'#288B70',red:'#D64545'} : C);
 
   useEffect(() => {
     if (!supabase) {
@@ -146,7 +169,7 @@ export default function App() {
       try {
         const { data: p, error: profileError } = await supabase
           .from('profiles')
-          .select('id, role, display_name')
+          .select('id, role, display_name, permissions, email')
           .eq('id', session.user.id)
           .single();
 
@@ -158,15 +181,16 @@ export default function App() {
           );
         }
 
-        if (!p || !['admin', 'viewer'].includes(p.role)) {
-          throw new Error('نقش حساب معتبر نیست. مقدار role باید admin یا viewer باشد.');
+        if (!p || !['admin', 'viewer', 'staff'].includes(p.role)) {
+          throw new Error('نقش حساب معتبر نیست.');
         }
 
         if (!alive) return;
         setProfile(p);
+        setProfileInfo({email:session.user.email || p.email || '',id:p.id,display_name:p.display_name || ''});
 
         const [inventoryResult, movementResult] = await Promise.all([
-          supabase.from('inventory').select('*').order('name'),
+          supabase.from('inventory').select('*').order('created_at', { ascending: true }),
           supabase.from('movements').select('*').order('created_at', { ascending: false }).limit(300)
         ]);
 
@@ -193,7 +217,7 @@ export default function App() {
     const refreshData = async () => {
       if (!alive || !session || !supabase) return;
       const [inventoryResult, movementResult] = await Promise.all([
-        supabase.from('inventory').select('*').order('name'),
+        supabase.from('inventory').select('*').order('created_at', { ascending: true }),
         supabase.from('movements').select('*').order('created_at', { ascending: false }).limit(300)
       ]);
       if (!alive) return;
@@ -215,7 +239,7 @@ export default function App() {
   async function refresh() {
     if (!supabase || !session) return;
     const [a,b] = await Promise.all([
-      supabase.from('inventory').select('*').order('name'),
+      supabase.from('inventory').select('*').order('created_at', { ascending: true }),
       supabase.from('movements').select('*').order('created_at',{ascending:false}).limit(300)
     ]);
     if (!a.error) setItems(a.data || []);
@@ -235,23 +259,25 @@ export default function App() {
     const name = newName.trim();
     if (!name) return Alert.alert('نام محصول را وارد کنید');
     setBusy(true);
-    const {error} = await supabase.from('inventory').insert({name,quantity:0});
+    const {error} = await supabase.from('inventory').insert({name,quantity:0,packaging_type:newPackaging.trim() || null,description:newDescription.trim()});
     setBusy(false);
     if (error) Alert.alert('خطا',error.message);
-    else { setNewName(''); refresh(); }
+    else { setNewName(''); setNewPackaging(''); setNewDescription(''); refresh(); }
   }
   function startEditItem(item) {
     setEditingItemId(item.id);
     setEditingItemName(item.name || '');
+    setEditingPackaging(item.packaging_type || '');
+    setEditingDescription(item.description || '');
   }
   async function saveItemEdit() {
     const name = editingItemName.trim();
     if (!name) return Alert.alert('نام محصول را وارد کنید');
     setBusy(true);
-    const {error} = await supabase.from('inventory').update({name}).eq('id',editingItemId);
+    const {error} = await supabase.from('inventory').update({name,packaging_type:editingPackaging.trim() || null,description:editingDescription.trim()}).eq('id',editingItemId);
     setBusy(false);
     if (error) Alert.alert('ویرایش انجام نشد',error.message);
-    else { setEditingItemId(null); setEditingItemName(''); await refresh(); }
+    else { setEditingItemId(null); setEditingItemName(''); setEditingPackaging(''); setEditingDescription(''); await refresh(); }
   }
   function confirmDeleteItem(item) {
     Alert.alert('حذف محصول',`محصول «${item.name}» حذف شود؟`,[
@@ -323,20 +349,123 @@ export default function App() {
     ]);
   }
 
+  function getReportRange(period) {
+    // Use Tehran local dates and Persian calendar months/years; week begins Saturday.
+    const shiftedNow = new Date(Date.now() + 210 * 60000);
+    const currentDate = new Date(Date.UTC(shiftedNow.getUTCFullYear(),shiftedNow.getUTCMonth(),shiftedNow.getUTCDate()));
+    const persianParts = date => {
+      const parts = new Intl.DateTimeFormat('en-US-u-ca-persian',{timeZone:'UTC',year:'numeric',month:'numeric',day:'numeric'}).formatToParts(date);
+      const get = type => Number(parts.find(x=>x.type===type)?.value||0);
+      return {year:get('year'),month:get('month'),day:get('day')};
+    };
+    const findBoundary = (from, predicate, maxDays=400) => {
+      for(let i=0;i<=maxDays;i++) {
+        const candidate=new Date(from.getTime()-i*86400000);
+        if(predicate(persianParts(candidate))) return candidate;
+      }
+      throw new Error('محاسبه بازه گزارش ناموفق بود');
+    };
+    let start,end;
+    if(period==='week') {
+      const daysSinceSaturday=(currentDate.getUTCDay()+1)%7;
+      end=new Date(currentDate.getTime()-daysSinceSaturday*86400000);
+      start=new Date(end.getTime()-7*86400000);
+    } else if(period==='month') {
+      const thisMonth=findBoundary(currentDate,p=>p.day===1,35);
+      end=thisMonth;
+      start=findBoundary(new Date(thisMonth.getTime()-86400000),p=>p.day===1,35);
+    } else {
+      const thisYear=findBoundary(currentDate,p=>p.month===1&&p.day===1,370);
+      end=thisYear;
+      start=findBoundary(new Date(thisYear.getTime()-86400000),p=>p.month===1&&p.day===1,370);
+    }
+    const iso = dt => new Date(dt.getTime() - 210*60000).toISOString();
+    return {start:iso(start),end:iso(end)};
+  }
+  async function loadReport(period=reportPeriod) {
+    if (!isAdmin) return;
+    setReportLoading(true);
+    const range=getReportRange(period);
+    let allRows=[], page=0, error=null;
+    while(true) {
+      const result=await supabase.from('movements').select('id,item_name,type,quantity,created_at')
+        .gte('created_at',range.start).lt('created_at',range.end).order('created_at',{ascending:true}).range(page*1000,page*1000+999);
+      if(result.error) { error=result.error; break; }
+      const chunk=result.data||[]; allRows=allRows.concat(chunk);
+      if(chunk.length<1000) break; page++;
+    }
+    setReportLoading(false);
+    if(error) return Alert.alert('گزارش دریافت نشد',error.message);
+    setReportRows(allRows);
+  }
+  async function exportReport() {
+    if (!isAdmin) return;
+    const label={week:'هفته گذشته',month:'ماه گذشته',year:'سال گذشته'}[reportPeriod];
+    const rows=reportRows.map(x=>`<tr><td>${escapeHtml(x.item_name||'—')}</td><td>${escapeHtml(formatIranDateTime(x.created_at))}</td><td>${Number(x.quantity||0).toLocaleString('fa-IR')}</td><td>${x.type==='in'?'ورودی':'خروجی'}</td></tr>`).join('');
+    const html=`<html lang="fa" dir="rtl"><meta charset="utf-8"><style>body{font-family:Arial,sans-serif;padding:24px;color:#182A43}h2{text-align:center}table{width:100%;border-collapse:collapse}th,td{border:1px solid #ccd6df;padding:9px;text-align:right}th{background:#e5f3f0}</style><h2>گزارش انبار - ${label}</h2><p>تاریخ تهیه: ${formatIranDateTime(new Date().toISOString())}</p><table><thead><tr><th>نام محصول</th><th>تاریخ و ساعت</th><th>تعداد</th><th>نوع عملیات</th></tr></thead><tbody>${rows||'<tr><td colspan="4">رکوردی ثبت نشده است</td></tr>'}</tbody></table></html>`;
+    try {
+      const file=await Print.printToFileAsync({html});
+      if(await Sharing.isAvailableAsync()) await Sharing.shareAsync(file.uri,{mimeType:'application/pdf',dialogTitle:'اشتراک گزارش انبار'});
+      else await Share.share({message:file.uri});
+    } catch(e) { Alert.alert('ساخت PDF ناموفق بود',e.message||'خطای نامشخص'); }
+  }
+  function escapeHtml(value) { return String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  async function loadContact() {
+    const {data,error}=await supabase.from('app_settings').select('value').eq('key','contact').maybeSingle();
+    if(!error && data?.value) { setContact(data.value); setContactDraft(data.value); }
+  }
+  async function saveContact() {
+    const {error}=await supabase.from('app_settings').upsert({key:'contact',value:contactDraft,updated_by:session.user.id});
+    if(error) return Alert.alert('ذخیره نشد',error.message);
+    setContact(contactDraft); Alert.alert('ذخیره شد','اطلاعات ارتباط با ما به‌روزرسانی شد.');
+  }
+  async function loadUsers() {
+    if(!isAdmin) return;
+    const {data,error}=await supabase.from('profiles').select('id,email,display_name,role,permissions').order('created_at',{ascending:true});
+    if(error) Alert.alert('خطا',error.message); else setUsers(data||[]);
+  }
+  async function createUser() {
+    if(!isAdmin) return;
+    if(!userEmail.trim()||userPassword.length<8) return Alert.alert('اطلاعات ناقص','ایمیل و رمز حداقل ۸ کاراکتری وارد کنید.');
+    setBusy(true);
+    const {data:{session:current}}=await supabase.auth.getSession();
+    const {data,error}=await supabase.functions.invoke('admin-create-user',{body:{email:userEmail.trim(),password:userPassword,display_name:userName.trim(),role:userRole,permissions:userRole==='staff'?permissions:{}} ,headers:{Authorization:`Bearer ${current?.access_token||''}`}});
+    setBusy(false);
+    if(error) return Alert.alert('ساخت کاربر ناموفق',error.message);
+    setUserEmail('');setUserPassword('');setUserName('');await loadUsers();Alert.alert('کاربر ساخته شد','حساب جدید آماده ورود است.');
+  }
+  async function updateUserRole(user,role) {
+    if(!isAdmin || user.id===session.user.id) return;
+    const {error}=await supabase.from('profiles').update({role,permissions:role==='staff'?user.permissions||{}:{}}).eq('id',user.id);
+    if(error) Alert.alert('تغییر نقش ناموفق',error.message); else loadUsers();
+  }
+  async function updateUserPermission(user,key,value) {
+    if(!isAdmin || user.id===session.user.id || user.role!=='staff') return;
+    const next={...(user.permissions||{}),[key]:value};
+    if(value && ['record_in','record_out','manage_products'].includes(key)) next.view_stock=true;
+    const {error}=await supabase.from('profiles').update({permissions:next}).eq('id',user.id);
+    if(error) Alert.alert('تغییر دسترسی ناموفق',error.message); else loadUsers();
+  }
+  async function loadSettings() { await loadContact(); }
+
+  useEffect(()=>{ if(session && profile) loadSettings(); },[session,profile]);
+  useEffect(()=>{ AsyncStorage.getItem('junior-theme').then(v=>{if(v){try{const x=JSON.parse(v);setDarkMode(!!x.darkMode);setPalette(x.palette||'teal');}catch{}}}); },[]);
+  useEffect(()=>{ AsyncStorage.setItem('junior-theme',JSON.stringify({darkMode,palette})).catch(()=>{}); },[darkMode,palette]);
+
   const filtered = useMemo(() => items.filter(i => i.name.toLowerCase().includes(search.toLowerCase())),[items,search]);
   const total = items.reduce((n,i)=>n+Number(i.quantity||0),0);
 
   if (!configured) return <SafeAreaView style={s.safe}><StatusBar barStyle="dark-content"/>
     <ScrollView contentContainerStyle={s.centerPage}>
-      <Text style={s.logo}>JUNIOR STORAGE</Text><Text style={s.heading}>اتصال دیتابیس لازم است</Text>
-      <Text style={s.info}>پروژه و رابط کاربری ساخته شده‌اند. برای فعال‌شدن ورود چندکاربره، ابتدا پروژه Supabase بسازید، سپس مقدار EXPO_PUBLIC_SUPABASE_URL و EXPO_PUBLIC_SUPABASE_ANON_KEY را در فایل .env وارد کنید. فایل database.sql کنار پروژه ساخته می‌شود.</Text>
-      <Text style={s.sub}>پس از تنظیم فایل، برنامه را با دستور npx expo start -c دوباره اجرا کنید.</Text>
+      <Text style={s.logo}>JUNIOR STORAGE</Text><Text style={[s.heading,{color:activeColors.ink}]}>اتصال دیتابیس لازم است</Text>
+      <Text style={[s.info,{color:activeColors.muted}]}>پروژه و رابط کاربری ساخته شده‌اند. برای فعال‌شدن ورود چندکاربره، ابتدا پروژه Supabase بسازید، سپس مقدار EXPO_PUBLIC_SUPABASE_URL و EXPO_PUBLIC_SUPABASE_ANON_KEY را در فایل .env وارد کنید. فایل database.sql کنار پروژه ساخته می‌شود.</Text>
+      <Text style={[s.sub,{color:activeColors.muted}]}>پس از تنظیم فایل، برنامه را با دستور npx expo start -c دوباره اجرا کنید.</Text>
     </ScrollView></SafeAreaView>;
 
   if (!session) return <SafeAreaView style={s.safe}><StatusBar barStyle="dark-content"/>
     <KeyboardAvoidingView behavior={Platform.OS==='ios'?'padding':undefined} style={s.centerPage}>
-      <Text style={s.logo}>JUNIOR STORAGE</Text><Text style={s.heading}>مدیریت انبار کارخانه</Text>
-      <Text style={s.sub}>برای ورود، حساب کاربری مجاز خود را وارد کنید.</Text>
+      <Text style={s.logo}>JUNIOR STORAGE</Text><Text style={[s.heading,{color:activeColors.ink}]}>مدیریت انبار کارخانه</Text>
+      <Text style={[s.sub,{color:activeColors.muted}]}>برای ورود، حساب کاربری مجاز خود را وارد کنید.</Text>
       <Field value={email} onChangeText={setEmail} placeholder="ایمیل" keyboardType="email-address"/>
       <Field value={password} onChangeText={setPassword} placeholder="رمز عبور" secureTextEntry/>
       <Btn title={busy?'لطفاً صبر کنید':'ورود به برنامه'} onPress={login} disabled={busy}/>
@@ -345,62 +474,93 @@ export default function App() {
 
   if (loading) return <SafeAreaView style={s.safe}><ActivityIndicator style={{marginTop:80}} color={C.blue}/></SafeAreaView>;
 
-  const title = ({stock:'آمار فعلی',in:'ورودی',out:'خروجی',hin:'تاریخچه ورودی',hout:'تاریخچه خروجی'})[tab];
+  const title = ({stock:'آمار فعلی',in:'ورودی',out:'خروجی',hin:'تاریخچه ورودی',hout:'تاریخچه خروجی',reports:'گزارش و فاکتور',admin:'مدیریت کاربران',settings:'تنظیمات',contact:'ارتباط با ما',profile:'حساب کاربری'})[tab] || 'Junior Storage';
   const historyType = tab === 'hin' ? 'in' : 'out';
   const shownHistory = groupHistoryByDay(history, historyType);
 
-  return <SafeAreaView style={s.safe}><StatusBar barStyle="dark-content" translucent={true} backgroundColor={C.card}/>
-    <View style={s.topbar}><View style={s.topbarTitle}><Text style={s.brand} numberOfLines={1} adjustsFontSizeToFit>JUNIOR STORAGE</Text><Text style={s.sub} numberOfLines={1}>مدیریت انبار کارخانه</Text></View>
+  return <SafeAreaView style={[s.safe,{backgroundColor:activeColors.bg}]}><StatusBar barStyle={darkMode?'light-content':'dark-content'} translucent={true} backgroundColor={activeColors.card}/>
+    <View style={[s.topbar,{backgroundColor:activeColors.card,borderColor:activeColors.line}]}><View style={s.topbarTitle}><Text style={s.brand} numberOfLines={1} adjustsFontSizeToFit>JUNIOR STORAGE</Text><Text style={[s.sub,{color:activeColors.muted}]} numberOfLines={1}>مدیریت انبار کارخانه</Text></View>
       <TouchableOpacity onPress={logout} hitSlop={{top:10,bottom:10,left:10,right:10}} style={s.logoutButton}><Text style={s.logout}>خروج</Text></TouchableOpacity></View>
-    <View style={s.content}>
-      <View style={s.pageTitleRow}><Text style={s.heading}>{title}</Text><Text style={s.role}>{isAdmin?'مدیر':'مشاهده‌گر'}</Text></View>
-      {tab==='stock' && <ScrollView>
-        <View style={s.summary}><Text style={s.summaryLabel}>مجموع تعداد موجودی</Text><Text style={s.summaryNum}>{total.toLocaleString('fa-IR')}</Text><Text style={s.summaryFoot}>{items.length.toLocaleString('fa-IR')} نوع محصول</Text></View>
+    <View style={[s.content,{backgroundColor:activeColors.bg}]}>
+      <View style={s.pageTitleRow}><Text style={[s.heading,{color:activeColors.ink}]}>{title}</Text><Text style={s.role}>{isAdmin?'مدیر':profile?.role==='staff'?'کاربر عادی':'مشاهده‌گر'}</Text></View>
+      {tab==='stock' && can('view_stock') && <ScrollView>
+        <View style={[s.summary,{backgroundColor:darkMode?'#263B4D':'#101D2C'}]}><Text style={s.summaryLabel}>مجموع تعداد موجودی</Text><Text style={s.summaryNum}>{total.toLocaleString('fa-IR')}</Text><Text style={s.summaryFoot}>{items.length.toLocaleString('fa-IR')} نوع محصول</Text></View>
         <Field value={search} onChangeText={setSearch} placeholder="جست‌وجوی نام محصول..."/>
-        {isAdmin && <View style={s.card}><Text style={s.cardTitle}>افزودن محصول جدید</Text><Field value={newName} onChangeText={setNewName} placeholder="نام محصول"/>
+        {can('manage_products') && <View style={[s.card,{backgroundColor:activeColors.card,borderColor:activeColors.line}]}><Text style={[s.cardTitle,{color:activeColors.ink}]}>افزودن محصول جدید</Text><Field value={newName} onChangeText={setNewName} placeholder="نام محصول"/>
+          <Field value={newPackaging} onChangeText={setNewPackaging} placeholder="نوع بسته‌بندی (مثلاً کارتن، گونی، جعبه)"/>
+          <Field value={newDescription} onChangeText={setNewDescription} placeholder="توضیحات محصول (اختیاری)" multiline/>
           <Btn title="افزودن به انبار" onPress={addItem} disabled={busy}/></View>}
-        {filtered.length===0 ? <Empty text="محصولی ثبت نشده است."/> : filtered.map(i=><View key={i.id} style={s.productCard}>
+        {filtered.length===0 ? <Empty text="محصولی ثبت نشده است."/> : filtered.map(i=><View key={i.id} style={[s.productCard,{backgroundColor:activeColors.card,borderColor:activeColors.line}]}>
           {editingItemId===i.id ? <View style={s.editProductBox}>
             <Field value={editingItemName} onChangeText={setEditingItemName} placeholder="نام محصول جدید"/>
-            <View style={s.actionRow}><Btn title="ذخیره" onPress={saveItemEdit} disabled={busy} small/><Btn title="انصراف" kind="light" onPress={()=>{setEditingItemId(null);setEditingItemName('');}} small/></View>
+            <Field value={editingPackaging} onChangeText={setEditingPackaging} placeholder="نوع بسته‌بندی (کارتن، گونی، جعبه...)"/>
+            <Field value={editingDescription} onChangeText={setEditingDescription} placeholder="توضیحات محصول" multiline/>
+            <View style={s.actionRow}<Btn title="ذخیره" onPress={saveItemEdit} disabled={busy} small/><Btn title="انصراف" kind="light" onPress={()=>{setEditingItemId(null);setEditingItemName('');}} small/></View>
           </View> : <>
-            <View style={s.productInfo}><Text style={s.itemName}>{i.name}</Text><Text style={s.qty}>{Number(i.quantity).toLocaleString('fa-IR')}</Text></View>
-            {isAdmin && <View style={s.actionRow}><Btn title="ویرایش" kind="light" onPress={()=>startEditItem(i)} disabled={busy} small/><Btn title="حذف" kind="danger" onPress={()=>confirmDeleteItem(i)} disabled={busy} small/></View>}
+            <View style={s.productInfo}><View style={{flex:1}}><Text style={[s.itemName,{color:activeColors.ink}]}>{i.name}</Text>{i.description ? <Text style={[s.sub,{color:activeColors.muted}]}>{i.description}</Text> : null}<Text style={[s.sub,{color:activeColors.muted}]}>بسته‌بندی: {i.packaging_type || '—'}</Text></View><Text style={[s.qty,{color:activeColors.ink}]}>{Number(i.quantity).toLocaleString('fa-IR')}</Text></View>
+            {can('manage_products') && <View style={s.actionRow}><Btn title="ویرایش" kind="light" onPress={()=>startEditItem(i)} disabled={busy} small/><Btn title="حذف" kind="danger" onPress={()=>confirmDeleteItem(i)} disabled={busy} small/></View>}
           </>}
         </View>)}
       </ScrollView>}
-      {(tab==='in'||tab==='out') && <ScrollView keyboardShouldPersistTaps="handled">
-        <Text style={s.info}>{tab==='in'?'تعداد ورودی هر محصول را وارد کنید.':'تعداد خروجی هر محصول را وارد کنید. موجودی کافی بررسی می‌شود.'}</Text>
+      {(tab==='in'||tab==='out') && (can(tab==='in'?'record_in':'record_out')) && <ScrollView keyboardShouldPersistTaps="handled">
+        <Text style={[s.info,{color:activeColors.muted}]}>{tab==='in'?'تعداد ورودی هر محصول را وارد کنید.':'تعداد خروجی هر محصول را وارد کنید. موجودی کافی بررسی می‌شود.'}</Text>
         {items.length===0 ? <Empty text="ابتدا مدیر باید محصولات را در بخش آمار فعلی اضافه کند."/> :
-          items.map(i=><View key={i.id} style={s.qtyRow}><View style={{flex:1}}><Text style={s.itemName}>{i.name}</Text><Text style={s.sub}>موجودی: {Number(i.quantity).toLocaleString('fa-IR')}</Text></View>
+          items.map(i=><View key={i.id} style={s.qtyRow}><View style={{flex:1}}><Text style={[s.itemName,{color:activeColors.ink}]}>{i.name}</Text><Text style={[s.sub,{color:activeColors.muted}]}>موجودی: {Number(i.quantity).toLocaleString('fa-IR')}</Text></View>
             <Field value={String(quantities[i.id]??'')} onChangeText={v=>setQuantities(q=>({...q,[i.id]:v.replace(/[^0-9]/g,'')}))}
               placeholder="۰" keyboardType="number-pad" style={s.qtyInput}/></View>)}
-        {items.length>0 && <Btn title={busy?'در حال ثبت...':tab==='in'?'ثبت همه ورودی‌ها':'ثبت همه خروجی‌ها'} onPress={()=>submitMovement(tab)} disabled={!isAdmin||busy}/>}
-        {!isAdmin && <Text style={s.tiny}>فقط مدیر اجازه ثبت عملیات را دارد.</Text>}
+        {items.length>0 && <Btn title={busy?'در حال ثبت...':tab==='in'?'ثبت همه ورودی‌ها':'ثبت همه خروجی‌ها'} onPress={()=>submitMovement(tab)} disabled={!can(tab==='in'?'record_in':'record_out')||busy}/>}
+        {!can(tab==='in'?'record_in':'record_out') && <Text style={s.tiny}>برای حساب شما مجوز ثبت این عملیات فعال نیست.</Text>}
       </ScrollView>}
       {(tab==='hin'||tab==='hout') && <View style={{flex:1}}>
         {isAdmin && <Btn title={busy?'در حال حذف...':'حذف همه تاریخچه'} kind="danger"
           onPress={()=>confirmDeleteAllMovements(historyType)} disabled={busy || shownHistory.length===0}/>}
         <FlatList data={shownHistory} keyExtractor={day=>day.key}
           ListEmptyComponent={<Empty text="هنوز سابقه‌ای ثبت نشده است."/>}
-          renderItem={({item:day})=><View style={s.dailyCard}>
+          renderItem={({item:day})=><View style={[s.dailyCard,{backgroundColor:activeColors.card,borderColor:activeColors.line}]}>
             <View style={s.dailyHeader}>
-              <Text style={s.dailyDate}>{formatIranDay(day.date)}</Text>
+              <Text style={[s.dailyDate,{color:activeColors.ink}]}>{formatIranDay(day.date)}</Text>
               <Text style={s.dailyTotal}>{day.entries.length.toLocaleString('fa-IR')} رکورد</Text>
             </View>
             {day.entries.map(entry=><View key={entry.id} style={s.historyRow}>
               <View style={{flex:1,minWidth:0}}>
-                <Text style={s.itemName}>{entry.item_name || 'محصول بدون نام'}</Text>
-                <Text style={s.sub}>{formatIranDateTime(entry.created_at)}</Text>
+                <Text style={[s.itemName,{color:activeColors.ink}]}>{entry.item_name || 'محصول بدون نام'}</Text>
+                <Text style={[s.sub,{color:activeColors.muted}]}>{formatIranDateTime(entry.created_at)}</Text>
               </View>
               <Text style={[s.qty,{color:historyType==='in'?C.green:C.red}]}>{historyType==='in'?'+':'−'}{Number(entry.quantity).toLocaleString('fa-IR')}</Text>
               {isAdmin && <Btn title="حذف" kind="danger" small onPress={()=>confirmDeleteMovement(entry)} disabled={busy}/>}
             </View>)}
           </View>}/>
       </View>}
+      {tab==='reports' && isAdmin && <ScrollView>
+        <Text style={[s.info,{color:activeColors.muted}]}>گزارش‌ها به‌صورت جداگانه برای بازه کامل قبلی تهیه می‌شوند.</Text>
+        <View style={s.actionRow}>{[['week','هفته گذشته'],['month','ماه گذشته'],['year','سال گذشته']].map(([v,l])=><Btn key={v} title={l} kind={reportPeriod===v?'primary':'light'} small onPress={()=>{setReportPeriod(v);loadReport(v);}}/>)}</View>
+        <Btn title={reportLoading?'در حال دریافت...':'نمایش گزارش'} onPress={()=>loadReport()} disabled={reportLoading}/>
+        <Text style={[s.cardTitle,{color:activeColors.ink}]}>تعداد رکوردها: {reportRows.length.toLocaleString('fa-IR')}</Text>
+        {reportRows.map(r=><View key={r.id} style={s.historyRow}><View style={{flex:1}}><Text style={[s.itemName,{color:activeColors.ink}]}>{r.item_name||'محصول'}</Text><Text style={[s.sub,{color:activeColors.muted}]}>{formatIranDateTime(r.created_at)} · {r.type==='in'?'ورودی':'خروجی'}</Text></View><Text style={[s.qty,{color:activeColors.ink}]}>{Number(r.quantity).toLocaleString('fa-IR')}</Text></View>)}
+        <Btn title="تهیه PDF و اشتراک‌گذاری" onPress={exportReport} disabled={reportLoading}/>
+      </ScrollView>}
+      {tab==='admin' && isAdmin && <ScrollView keyboardShouldPersistTaps="handled">
+        <View style={[s.card,{backgroundColor:activeColors.card,borderColor:activeColors.line}]}><Text style={[s.cardTitle,{color:activeColors.ink}]}>افزودن کاربر جدید</Text>
+          <Field value={userName} onChangeText={setUserName} placeholder="نام نمایشی"/><Field value={userEmail} onChangeText={setUserEmail} placeholder="ایمیل کاربر" keyboardType="email-address"/><Field value={userPassword} onChangeText={setUserPassword} placeholder="رمز عبور (حداقل ۸ کاراکتر)" secureTextEntry/>
+          <Text style={[s.sub,{color:activeColors.muted}]}>نقش: viewer فقط مشاهده · staff با مجوزهای انتخابی</Text>
+          <View style={s.actionRow}><Btn title="مشاهده‌گر" kind={userRole==='viewer'?'primary':'light'} small onPress={()=>setUserRole('viewer')}/><Btn title="کاربر با دسترسی انتخابی" kind={userRole==='staff'?'primary':'light'} small onPress={()=>setUserRole('staff')}/></View>
+          {userRole==='staff' && [['view_stock','مشاهده موجودی'],['record_in','ثبت ورودی'],['record_out','ثبت خروجی'],['manage_products','مدیریت محصولات']].map(([k,l])=><View key={k} style={s.settingRow}><Text style={[s.itemName,{color:activeColors.ink}]}>{l}</Text><Switch value={!!permissions[k]} onValueChange={v=>setPermissions(p=>({...p,[k]:v,...(v&&['record_in','record_out','manage_products'].includes(k)?{view_stock:true}:{})}))}/></View>)}
+          <Btn title={busy?'در حال ساخت...':'ساخت حساب کاربری'} onPress={createUser} disabled={busy}/>
+        </View>
+        <View style={[s.card,{backgroundColor:activeColors.card,borderColor:activeColors.line}]}><Text style={[s.cardTitle,{color:activeColors.ink}]}>کاربران ثبت‌شده</Text><Btn title="به‌روزرسانی فهرست" kind="light" onPress={loadUsers}/>
+          {users.map(u=><View key={u.id} style={s.userRow}><View style={{flex:1}}><Text style={[s.itemName,{color:activeColors.ink}]}>{u.display_name||u.email||u.id}</Text><Text style={[s.sub,{color:activeColors.muted}]}>{u.email||u.id}</Text><Text style={[s.sub,{color:activeColors.muted}]}>نقش: {u.role}</Text>{u.role==='staff' && [['view_stock','مشاهده موجودی'],['record_in','ثبت ورودی'],['record_out','ثبت خروجی'],['manage_products','مدیریت محصولات']].map(([k,l])=><View key={k} style={s.settingRow}><Text style={[s.sub,{color:activeColors.muted}]}>{l}</Text><Switch value={!!u.permissions?.[k]} onValueChange={v=>updateUserPermission(u,k,v)}/></View>)}</View>{u.id!==session.user.id && <View style={s.actionRow}><Btn title="مشاهده‌گر" small kind="light" onPress={()=>updateUserRole(u,'viewer')}/><Btn title="کاربر عادی" small onPress={()=>updateUserRole(u,'staff')}/></View>}</View>)}
+        </View>
+      </ScrollView>}
+      {tab==='settings' && <ScrollView><View style={[s.card,{backgroundColor:activeColors.card,borderColor:activeColors.line}]}><Text style={[s.cardTitle,{color:activeColors.ink}]}>نمایش برنامه</Text><View style={s.settingRow}><Text style={[s.itemName,{color:activeColors.ink}]}>حالت تیره</Text><Switch value={darkMode} onValueChange={setDarkMode}/></View><Text style={[s.sub,{color:activeColors.muted}]}>رنگ‌بندی</Text><View style={s.actionRow}><Btn title="سبزآبی" kind={palette==='teal'?'primary':'light'} small onPress={()=>setPalette('teal')}/><Btn title="آبی" kind={palette==='blue'?'primary':'light'} small onPress={()=>setPalette('blue')}/><Btn title="بنفش" kind={palette==='purple'?'primary':'light'} small onPress={()=>setPalette('purple')}/></View></View>
+        <View style={[s.card,{backgroundColor:activeColors.card,borderColor:activeColors.line}]}><Text style={[s.cardTitle,{color:activeColors.ink}]}>حساب کاربری</Text><Btn title="مشاهده اطلاعات حساب" kind="light" onPress={()=>setTab('profile')}/><Btn title="ارتباط با ما" kind="light" onPress={()=>setTab('contact')}/><Btn title="اشتراک‌گذاری برنامه" onPress={()=>Share.share({message:'Junior Storage - برنامه مدیریت انبار'})}/></View>
+      </ScrollView>}
+      {tab==='profile' && <ScrollView><View style={[s.card,{backgroundColor:activeColors.card,borderColor:activeColors.line}]}><Text style={[s.cardTitle,{color:activeColors.ink}]}>اطلاعات حساب</Text><Text style={[s.info,{color:activeColors.muted}]}>نام: {profileInfo?.display_name||'—'}</Text><Text style={[s.info,{color:activeColors.muted}]}>ایمیل: {profileInfo?.email||'—'}</Text><Text style={[s.info,{color:activeColors.muted}]}>شناسه: {profileInfo?.id||'—'}</Text><Text style={[s.info,{color:activeColors.muted}]}>نقش: {profile?.role||'—'}</Text></View></ScrollView>}
+      {tab==='contact' && <ScrollView><View style={[s.card,{backgroundColor:activeColors.card,borderColor:activeColors.line}]}><Text style={[s.cardTitle,{color:activeColors.ink}]}>ارتباط با ما</Text>
+        {isAdmin ? <><Field value={contactDraft.title} onChangeText={v=>setContactDraft(c=>({...c,title:v}))} placeholder="عنوان"/><Field value={contactDraft.phone} onChangeText={v=>setContactDraft(c=>({...c,phone:v}))} placeholder="شماره تماس" keyboardType="phone-pad"/><Field value={contactDraft.email} onChangeText={v=>setContactDraft(c=>({...c,email:v}))} placeholder="ایمیل"/><Field value={contactDraft.description} onChangeText={v=>setContactDraft(c=>({...c,description:v}))} placeholder="توضیحات"/><Btn title="ذخیره اطلاعات تماس" onPress={saveContact}/></> : <><Text style={[s.info,{color:activeColors.muted}]}>{contact.description||'برای اطلاعات بیشتر از راه‌های زیر با ما در ارتباط باشید.'}</Text><Text style={[s.info,{color:activeColors.muted}]}>تلفن: {contact.phone||'ثبت نشده'}</Text><Text style={[s.info,{color:activeColors.muted}]}>ایمیل: {contact.email||'ثبت نشده'}</Text></>}
+      </View></ScrollView>}
     </View>
-    <View style={s.nav}>{[['stock','آمار فعلی','▦'],['in','ورودی','＋'],['out','خروجی','－'],['hin','تاریخچه ورودی','↙'],['hout','تاریخچه خروجی','↗']].map(([id,label,ico])=>
-      <TouchableOpacity key={id} onPress={()=>{setTab(id);setSearch('');}} style={[s.navItem,tab===id&&s.navActive]}>
+    <View style={[s.nav,{backgroundColor:activeColors.card,borderColor:activeColors.line}]}>{[...(can('view_stock')?[['stock','آمار','▦']]:[]),...(can('record_in')?[['in','ورودی','＋']]:[]),...(can('record_out')?[['out','خروجی','－']]:[]),...(can('view_stock')?[['hin','تاریخچه ورودی','↙'],['hout','تاریخچه خروجی','↗']]:[]),['settings','تنظیمات','⚙'],...(isAdmin?[['reports','گزارش','▤'],['admin','مدیریت','♙']]:[])].map(([id,label,ico])=>
+      <TouchableOpacity key={id} onPress={()=>{setTab(id);setSearch('');if(id==='reports')loadReport();if(id==='admin')loadUsers();}} style={[s.navItem,tab===id&&s.navActive]}>
         <Text style={[s.navIcon,tab===id&&{color:C.blue}]}>{ico}</Text><Text style={[s.navText,tab===id&&{color:C.blue,fontWeight:'800'}]}>{label}</Text>
       </TouchableOpacity>)}</View>
   </SafeAreaView>;
@@ -455,5 +615,7 @@ const s=StyleSheet.create({
  navItem:{flex:1,minWidth:0,alignItems:'center',justifyContent:'center',paddingVertical:6,paddingHorizontal:1},
  navActive:{backgroundColor:C.pale,borderRadius:10,marginHorizontal:2},
  navIcon:{fontSize:15,color:C.muted,fontWeight:'900'},
- navText:{fontSize:8,color:C.muted,marginTop:2,textAlign:'center',flexShrink:1}
+ navText:{fontSize:8,color:C.muted,marginTop:2,textAlign:'center',flexShrink:1},
+ settingRow:{flexDirection:'row',justifyContent:'space-between',alignItems:'center',paddingVertical:8,borderBottomWidth:1,borderColor:C.line},
+ userRow:{paddingVertical:10,borderBottomWidth:1,borderColor:C.line}
 });
