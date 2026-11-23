@@ -9,6 +9,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createClient } from '@supabase/supabase-js';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
+import { File } from 'expo-file-system';
 
 const URL = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
 const KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
@@ -18,8 +19,8 @@ const supabase = configured ? createClient(URL, KEY, {
 }) : null;
 
 const C = {
-  bg:'#F1F8F7', card:'#FFFFFF', ink:'#14283A', muted:'#647985', blue:'#18B9A8',
-  pale:'#DDF7F2', green:'#138B78', red:'#D64545', line:'#DCEAE7', amber:'#C99F3D'
+  bg:'#E6F3F1', card:'#FFFFFF', ink:'#102A3A', muted:'#4D6874', blue:'#087F73',
+  pale:'#BFE5DD', green:'#086B59', red:'#C62828', line:'#B8D8D1', amber:'#A97816'
 };
 
 function Btn({ title, onPress, kind='primary', disabled=false, small=false }) {
@@ -116,7 +117,7 @@ export default function App() {
 
   const isAdmin = profile?.role === 'admin';
   const can = key => isAdmin || (profile?.role==='viewer' && key==='view_stock') || (profile?.permissions && profile.permissions[key] === true);
-  const activeColors = darkMode ? {bg:'#101923',card:'#1B2936',ink:'#F2F6F8',muted:'#A8B6C2',line:'#344656',pale:'#263E49',blue:'#42C7B5',green:'#51B99A',red:'#E46C6C'} : (palette==='blue' ? {bg:'#F1F5FB',card:'#FFFFFF',ink:'#182A43',muted:'#66768A',line:'#DFE7F1',pale:'#E3EDFA',blue:'#3977C9',green:'#188B70',red:'#D64545'} : palette==='purple' ? {bg:'#F7F3FA',card:'#FFFFFF',ink:'#2D2440',muted:'#756B83',line:'#E9E0F0',pale:'#EFE5F7',blue:'#8761B5',green:'#288B70',red:'#D64545'} : C);
+  const activeColors = darkMode ? {bg:'#101923',card:'#1B2936',ink:'#F2F6F8',muted:'#B7C5D0',line:'#405568',pale:'#284D59',blue:'#48D2C0',green:'#65C9A8',red:'#F07878'} : (palette==='blue' ? {bg:'#E3ECF8',card:'#F9FBFF',ink:'#10233D',muted:'#4D6079',line:'#C0D0E5',pale:'#C6D8F1',blue:'#205FAE',green:'#08765E',red:'#C62828'} : palette==='purple' ? {bg:'#EEE5F5',card:'#FCF9FF',ink:'#28183D',muted:'#5E4B70',line:'#D2C0E2',pale:'#DCC8EF',blue:'#68409B',green:'#16745A',red:'#C62828'} : C);
 
   useEffect(() => {
     if (!supabase) {
@@ -404,10 +405,29 @@ export default function App() {
     const rows=reportRows.map(x=>`<tr><td>${escapeHtml(x.item_name||'—')}</td><td>${escapeHtml(formatIranDateTime(x.created_at))}</td><td>${Number(x.quantity||0).toLocaleString('fa-IR')}</td><td>${x.type==='in'?'ورودی':'خروجی'}</td></tr>`).join('');
     const html=`<html lang="fa" dir="rtl"><meta charset="utf-8"><style>body{font-family:Arial,sans-serif;padding:24px;color:#182A43}h2{text-align:center}table{width:100%;border-collapse:collapse}th,td{border:1px solid #ccd6df;padding:9px;text-align:right}th{background:#e5f3f0}</style><h2>گزارش انبار - ${label}</h2><p>تاریخ تهیه: ${formatIranDateTime(new Date().toISOString())}</p><table><thead><tr><th>نام محصول</th><th>تاریخ و ساعت</th><th>تعداد</th><th>نوع عملیات</th></tr></thead><tbody>${rows||'<tr><td colspan="4">رکوردی ثبت نشده است</td></tr>'}</tbody></table></html>`;
     try {
-      const file=await Print.printToFileAsync({html});
-      if(await Sharing.isAvailableAsync()) await Sharing.shareAsync(file.uri,{mimeType:'application/pdf',dialogTitle:'اشتراک گزارش انبار'});
-      else await Share.share({message:file.uri});
-    } catch(e) { Alert.alert('ساخت PDF ناموفق بود',e.message||'خطای نامشخص'); }
+      const result=await Print.printToFileAsync({html});
+      if(!result?.uri) throw new Error('فایل PDF ساخته نشد.');
+      const pdfFile=new File(result.uri);
+      if(!pdfFile.exists) throw new Error('فایل PDF ساخته شد اما قابل خواندن نیست.');
+      if(await Sharing.isAvailableAsync()) {
+        try {
+          await Sharing.shareAsync(pdfFile.uri,{mimeType:'application/pdf',dialogTitle:'اشتراک گزارش انبار',UTI:'com.adobe.pdf'});
+        } catch(shareError) {
+          if(Platform.OS==='android' && await File.canPreview(pdfFile)) {
+            Alert.alert('اشتراک مستقیم ممکن نشد','فایل PDF ساخته شده است؛ از گزینه اشتراک‌گذاری در نمایشگر PDF استفاده کنید.',[
+              {text:'باز کردن PDF',onPress:()=>pdfFile.preview({title:'گزارش انبار'})},
+              {text:'باشه',style:'cancel'}
+            ]);
+          } else {
+            throw shareError;
+          }
+        }
+      } else if(await File.canPreview(pdfFile)) {
+        await pdfFile.preview({title:'گزارش انبار'});
+      } else {
+        throw new Error('امکان اشتراک‌گذاری یا نمایش PDF در این دستگاه در دسترس نیست.');
+      }
+    } catch(e) { Alert.alert('ساخت یا اشتراک PDF ناموفق بود',e.message||'خطای نامشخص'); }
   }
   function escapeHtml(value) { return String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
   async function loadContact() {
