@@ -598,7 +598,7 @@ export default function App() {
         <Btn title={reportLoading?'در حال دریافت...':'نمایش گزارش'} onPress={()=>loadReport()} disabled={reportLoading}/>
         <Text style={[s.cardTitle,{color:activeColors.ink}]}>تعداد رکوردها: {reportRows.length.toLocaleString('fa-IR')}</Text>
         {reportRows.map(r=><View key={r.id} style={s.historyRow}><View style={{flex:1}}><Text style={[s.itemName,{color:activeColors.ink}]}>{r.item_name||'محصول'}</Text><Text style={[s.sub,{color:activeColors.muted}]}>{formatIranDateTime(r.created_at)} · {r.type==='in'?'ورودی':'خروجی'}</Text></View><Text style={[s.qty,{color:activeColors.ink}]}>{Number(r.quantity).toLocaleString('fa-IR')}</Text></View>)}
-        <Btn title="تهیه PDF و اشتراک‌گذاری" onPress={exportReport} disabled={reportLoading}/>
+        <Btn title="دانلود PDF" onPress={exportReport} disabled={reportLoading}/>
       </ScrollView>}
       {tab==='admin' && isAdmin && <ScrollView keyboardShouldPersistTaps="handled">
         {selectedUserId ? (()=>{const u=users.find(x=>x.id===selectedUserId);if(!u)return <Empty text="کاربر پیدا نشد."/>;return <View style={[s.card,{backgroundColor:activeColors.card,borderColor:activeColors.line}]}>
